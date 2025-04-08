@@ -11,6 +11,14 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Helper function to replace Yale with Fale
+function replaceYaleWithFale(text) {
+  return text
+    .replace(/Yale/g, 'Fale')
+    .replace(/YALE/g, 'FALE')
+    .replace(/yale/g, 'fale');
+}
+
 // Route to serve the main page
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -25,41 +33,37 @@ app.post('/fetch', async (req, res) => {
       return res.status(400).json({ error: 'URL is required' });
     }
 
-    // Fetch the content from the provided URL
-    const response = await axios.get(url);
-    const html = response.data;
+    try {
+      // Validate URL
+      new URL(url);
+      
+      // Fetch the content from the provided URL
+      const response = await axios.get(url);
+      const $ = cheerio.load(response.data);
 
-    // Use cheerio to parse HTML
-    const $ = cheerio.load(html);
+      // Process text nodes
+      $('*').contents().each(function() {
+        if (this.type === 'text') {
+          const newText = replaceYaleWithFale($(this).text());
+          $(this).replaceWith(newText);
+        }
+      });
 
-    // Process text nodes in the body
-    $('body *').contents().filter(function() {
-      return this.nodeType === 3; // Text nodes only
-    }).each(function() {
-      const text = $(this).text();
-      const newText = text
-        .replace(/Yale/g, 'Fale')
-        .replace(/YALE/g, 'FALE')
-        .replace(/yale/g, 'fale');
-      if (text !== newText) {
-        $(this).replaceWith(newText);
+      // Send modified content
+      return res.json({
+        success: true,
+        content: $.html(),
+        originalUrl: url
+      });
+    } catch (error) {
+      if (error.code === 'ERR_INVALID_URL') {
+        return res.status(400).json({ error: 'Invalid URL format' });
       }
-    });
-
-    // Process title separately
-    const title = $('title').text()
-      .replace(/Yale/g, 'Fale')
-      .replace(/YALE/g, 'FALE')
-      .replace(/yale/g, 'fale');
-    $('title').text(title);
-
-    // Don't modify URLs or attributes
-    return res.json({ 
-      success: true, 
-      content: $.html(),
-      title: title,
-      originalUrl: url
-    });
+      console.error('Error fetching URL:', error.message);
+      return res.status(500).json({ 
+        error: `Failed to fetch content: ${error.message}` 
+      });
+    }
   } catch (error) {
     console.error('Error fetching URL:', error.message);
     return res.status(500).json({ 
